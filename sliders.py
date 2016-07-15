@@ -1,0 +1,230 @@
+#!/usr/bin/env python
+
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.widgets import Slider, Button
+from os.path import isfile
+import pickle
+
+""" Script to loop over multiple eclipses and identify by eye the contact phases of the bright spot eclipse. 
+"""
+
+
+
+
+#eclist = "eclnames.lis"	# folder containing list of eclipses
+eclist = "foldednames.lis"	# folder containing list of eclipses
+#eclist = "temp.lis"	# folder containing list of eclipses
+
+## Constants for displaying and phase folding
+
+period = 0.034519576212191858
+t0 = 57166.116142215891
+
+offset = 0.01
+dlscale = 1
+
+xmin = -0.1
+xmax = 0.2
+ymin = -0.04
+ymax = 0.1
+
+cautionFlag = False
+
+class Eclipse(object):
+	""" A class for handling times of an eclipse.
+	"""
+	def __init__(self, name):
+		self.name = name
+
+def differentiate(f, time):
+	""" Discrete differentiate a function (I'm not certain this does what it says it does).
+	"""
+	#dt = np.gradient(time)
+	#df = np.gradient(f, dt)
+	c = np.zeros(len(f))
+	for i in xrange(1):
+		c[i+1] += 1
+		c[-i] -= 1
+	#c = [-1,1]
+	df = np.convolve(f, c)
+	dfr = np.convolve(df, [1]*10)
+	return df, dfr
+
+
+## Define all of the update commands. I'm not certain if these need to be separate or not, but if there's a better way I don't know how to do it.
+
+def updatewd(val):
+	valwd = swd.val
+	scale = valwd / np.max(wdorig)
+	wd = wdorig*scale
+	global f
+	f = flux-wd
+	l.set_ydata(f[oi])
+	#dl.set_ydata()
+	twd.set_text(str(valwd))
+	fig.canvas.draw_idle()
+
+def updatep1(val):
+	p1 = val
+	lp1.set_xdata([p1,p1])
+	tp1.set_text(str(p1))
+	fig.canvas.draw_idle()
+
+def updatep2(val):
+	p2 = sp2.val
+	lp2.set_xdata([p2,p2])
+	tp2.set_text(str(p2))
+
+def updatep3(val):
+	p3 = sp3.val
+	lp3.set_xdata([p3,p3])
+	tp3.set_text(str(p3))
+
+def updatep4(val):
+	p4 = sp4.val
+	lp4.set_xdata([p4,p4])
+	tp4.set_text(str(p4))
+
+def refreshdl(event):
+	""" Refresh the differential not in real time, in case it slows things down
+	"""
+	df, dfr = differentiate(f, time)
+	dl.set_ydata(df[oi]*dlscale - offset)
+	dlr.set_ydata(dfr[oi]*dlscale - offset)
+	fig.canvas.draw_idle()
+
+def savec(event):
+	""" Save the eclipse data.
+	"""
+	eclipse = Eclipse(name)
+	eclipse.p1 = sp1.val
+	eclipse.p2 = sp2.val
+	eclipse.p3 = sp3.val
+	eclipse.p4 = sp4.val
+	if cautionFlag:
+		eclipse.caution=True
+	else:
+		eclipse.caution=False
+	with open("bseclipses/%s.pk1"%(name), 'wb') as f:
+		pickle.dump(eclipse,f,pickle.HIGHEST_PROTOCOL)
+		print "Saved, caution flag is", cautionFlag
+
+def savep(event):
+	""" Save figure
+	"""
+	plt.savefig("figures/%s.pdf"%(name))
+	plt.savefig("figures/%s.png"%(name))
+
+def caution(event):
+	""" Set a caution flag
+	"""
+	global cautionFlag
+	cautionFlag = True
+	print "Caution flag set to", cautionFlag
+
+###### The main loop of the program
+
+with open(eclist) as eclnames:
+	for name in eclnames:
+		name = name[:-1]	# trim trailing newline
+		fname = name+".dat"
+		fwd = "wds/"+name+".out"
+		
+		cautionFlag = False
+		
+		## Initial settings for variables
+		scale = 1
+		if isfile("bseclipses/%s.pk1"%(name)):
+			with open("bseclipses/%s.pk1"%(name), 'rb') as f:
+				eclipse = pickle.load(f)
+			p1 = eclipse.p1
+			p2 = eclipse.p2
+			p3 = eclipse.p3
+			p4 = eclipse.p4
+			if hasattr(eclipse, 'caution') and eclipse.caution:
+				cautionFlag = True
+			else:
+				cautionFlag = False
+			print "Loaded previous contact points"
+		else:
+			p1 = 0
+			p2 = 0
+			p3 = 0
+			p4 = 0
+			
+		## Read data
+		data = np.loadtxt(fname)
+		time = data[:,0]
+		flux = data[:,2]
+		err = data[:,3]
+		wdorig = np.loadtxt(fwd)[:,2]
+		
+		phase = ((time-t0)/period) % 1
+		phase[phase>0.5] -= 1
+		wd = wdorig*scale
+		f = flux - wd
+		df, dfr = differentiate(f, time)
+		
+		## Lay out the image, define all axes
+		fig, ax = plt.subplots()
+		plt.subplots_adjust(left=0.1, bottom=0.25, right=0.75)
+		plt.axis([xmin, xmax, ymin, ymax])
+		
+		oi = (phase > xmin) & (phase < xmax)
+		
+		fig.suptitle(name)
+		
+		l, = plt.plot(phase[oi], f[oi], 'b-')
+		dl, = plt.plot(phase[oi], df[oi]*dlscale - offset, 'g.')
+		dlr, = plt.plot(phase[oi], dfr[oi]*dlscale - offset, 'g-')
+		
+		lp1, = plt.plot([p1,p1,], [ymin, ymax], 'k-')
+		lp2, = plt.plot([p2,p2,], [ymin, ymax], 'k-')
+		lp3, = plt.plot([p3,p3,], [ymin, ymax], 'k-')
+		lp4, = plt.plot([p4,p4,], [ymin, ymax], 'k-')
+		
+		plt.vlines([-0.023,-0.015,0.022,0.015],ymin,ymax, linestyles='dashed')	#vertical lines at contact points of wd
+		
+		axwd = plt.axes([0.1,0.18,0.65,0.03])
+		axp1 = plt.axes([0.1, 0.13, 0.65, 0.03])
+		axp2 = plt.axes([0.1, 0.1, 0.65, 0.03])
+		axp3 = plt.axes([0.1, 0.07, 0.65, 0.03])
+		axp4 = plt.axes([0.1, 0.04, 0.65, 0.03])
+		axdl = plt.axes([0.8, 0.3, 0.1, 0.03])
+		axsc = plt.axes([0.8, 0.5, 0.1, 0.03])
+		axsp = plt.axes([0.8, 0.4, 0.1, 0.03])
+		axca = plt.axes([0.8, 0.2, 0.1, 0.03])
+		
+		## Define sliders and buttons
+		swd = Slider(axwd, 'WD', 0, 2*np.max(wdorig), valinit=np.max(wdorig))
+		sp1 = Slider(axp1, 'P1', xmin, xmax, valinit=p1)
+		sp2 = Slider(axp2, 'P2', xmin, xmax, valinit=p2)
+		sp3 = Slider(axp3, 'P3', xmin, xmax, valinit=p3)
+		sp4 = Slider(axp4, 'P4', xmin, xmax, valinit=p4)
+		button = Button(axdl, 'Differentiate', hovercolor='0.975')
+		bsavec = Button(axsc, 'Save contact points', hovercolor='0.975')
+		bsavep = Button(axsp, 'Save picture', hovercolor='0.975')
+		bcaution = Button(axca, 'Caution', hovercolor='0.975')
+		
+		twd = fig.text(0.8,0.8,str(np.max(wdorig)))
+		tp1 = fig.text(0.8,0.75,str(p1))
+		tp2 = fig.text(0.8,0.7,str(p2))
+		tp3 = fig.text(0.8,0.65,str(np.max(p3)))
+		tp4 = fig.text(0.8,0.6,str(np.max(p4)))
+		if cautionFlag:
+			tca = fig.text(0.8,0.55,"!")
+			print "Caution set"
+		
+		swd.on_changed(updatewd)
+		sp1.on_changed(updatep1)
+		sp2.on_changed(updatep2)
+		sp3.on_changed(updatep3)
+		sp4.on_changed(updatep4)
+		button.on_clicked(refreshdl)
+		bsavec.on_clicked(savec)
+		bsavep.on_clicked(savep)
+		bcaution.on_clicked(caution)
+		
+		plt.show()
+		
